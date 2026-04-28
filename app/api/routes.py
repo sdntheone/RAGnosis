@@ -9,12 +9,13 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+# ===== Initialize ONCE =====
+rag_chain = get_rag_chain(mode="default", k=2)
+
 
 # ===== Request Schema =====
 class ChatRequest(BaseModel):
     query: str
-    mode: str = "default"
-    k: int = 3
 
 
 # ===== Response Schema =====
@@ -30,9 +31,6 @@ def chat(request: ChatRequest):
 
     try:
         logger.info(f"Received query: {request.query}")
-
-        # Build RAG chain dynamically
-        rag_chain = get_rag_chain(mode=request.mode, k=request.k)
 
         response = rag_chain.invoke(request.query)
 
