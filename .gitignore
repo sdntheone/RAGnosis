@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Virtual env
+venv/
+ragnosis_env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Data
+data/raw/
+data/processed/
+
+# Vector DB
+vector_db/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
