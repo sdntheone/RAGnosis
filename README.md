@@ -6,7 +6,7 @@ RAGnosis is a high-performance Retrieval-Augmented Generation (RAG) system desig
 
 ## 📸 Demo
 
-![RAGnosis Chatbot Demo](assets/demo.png)
+![RAGnosis Chatbot Demo](assets/demo.JPG)
 
 --- 
 
