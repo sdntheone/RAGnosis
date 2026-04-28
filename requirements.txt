@@ -1,0 +1,30 @@
+# API
+fastapi
+uvicorn
+
+# LangChain ecosystem
+langchain
+langchain-community
+langchain-openai
+
+# LLM + embeddings
+openai
+sentence-transformers
+transformers
+torch
+
+# Vector DB (local)
+faiss-cpu
+
+# Document processing
+pypdf
+pymupdf
+
+# Tokenization
+tiktoken
+
+# Utils
+python-dotenv
+pydantic
+numpy
+tqdm
