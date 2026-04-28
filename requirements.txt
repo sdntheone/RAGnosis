@@ -28,3 +28,4 @@ python-dotenv
 pydantic
 numpy
 tqdm
+streamlit

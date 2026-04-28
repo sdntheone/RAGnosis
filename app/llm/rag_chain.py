@@ -11,55 +11,51 @@ load_dotenv()
 
 logger = get_logger(__name__)
 
-
-# ===== LLM =====
-def get_llm():
-    try:
-        logger.info("Initializing LLM")
-
-        return ChatOpenAI(
-            model="gpt-4",
-            temperature=0
-        )
-
-    except Exception as e:
-        logger.error(f"Error initializing LLM: {e}")
-        raise
+# ===== Global Cache =====
+_rag_chain = None
 
 
-# ===== Format Docs =====
+# ===== Format Docs (trimmed for speed) =====
 def format_docs(docs):
     try:
-        return "\n\n".join(doc.page_content for doc in docs)
+        return "\n\n".join(doc.page_content[:200] for doc in docs)
     except Exception as e:
         logger.error(f"Error formatting docs: {e}")
         return ""
 
 
-# ===== Build RAG Chain =====
-def get_rag_chain(mode: str = "default", k: int = 5):
-    try:
-        logger.info(f"Building RAG chain | mode={mode}, k={k}")
+# ===== Build RAG Chain (ONLY ONCE) =====
+def get_rag_chain(mode: str = "default", k: int = 2):
+    global _rag_chain
 
-        retriever = get_retriever(k=k)
-        prompt = get_prompt(mode=mode)
-        llm = get_llm()
+    if _rag_chain is None:
+        try:
+            logger.info(f"Initializing RAG chain (once) | mode={mode}, k={k}")
 
-        rag_chain = (
-            {
-                "context": retriever | format_docs,
-                "question": lambda x: x
-            }
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
+            retriever = get_retriever(k=k)
+            prompt = get_prompt(mode=mode)
 
-        return rag_chain
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0,
+                streaming=True
+            )
 
-    except Exception as e:
-        logger.error(f"Error building RAG chain: {e}")
-        raise
+            _rag_chain = (
+                {
+                    "context": retriever | format_docs,
+                    "question": lambda x: x
+                }
+                | prompt
+                | llm
+                | StrOutputParser()
+            )
+
+        except Exception as e:
+            logger.error(f"Error building RAG chain: {e}")
+            raise
+
+    return _rag_chain
 
 
 # ===== Main (Testing) =====
@@ -67,7 +63,7 @@ def main():
     logger.info("Starting RAG test")
 
     try:
-        rag_chain = get_rag_chain(mode="default", k=5)
+        rag_chain = get_rag_chain(mode="default", k=3)
 
         query = "What is unsupervised learning?"
         response = rag_chain.invoke(query)
