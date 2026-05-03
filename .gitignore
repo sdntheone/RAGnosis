@@ -238,3 +238,4 @@ data/processed/
 vector_db/
 # Notebook checkpoints
 .ipynb_checkpoints/
+.dockerignore

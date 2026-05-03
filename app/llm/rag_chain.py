@@ -1,6 +1,6 @@
 import os
-import mlflow
-from dotenv import load_dotenv
+from threading import Lock
+
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
 
@@ -8,15 +8,14 @@ from app.utils.logger import get_logger
 from app.retrieval.vector_store import get_retriever
 from app.llm.prompt import get_prompt
 
-load_dotenv()
-
 logger = get_logger(__name__)
 
-# ===== Global Cache =====
-_rag_chain = None
+# ===== Cache + Lock =====
+_cache = {}
+_lock = Lock()
 
 
-# ===== Format Docs (trimmed for speed) =====
+# ===== Format Docs =====
 def format_docs(docs):
     try:
         return "\n\n".join(doc.page_content[:200] for doc in docs)
@@ -25,15 +24,24 @@ def format_docs(docs):
         return ""
 
 
-# ===== Build RAG Chain (ONLY ONCE) =====
+# ===== Build + Cache RAG Chain =====
 def get_rag_chain(mode: str = "default", k: int = 2):
-    llm_model="gpt-4o-mini"
-    temperature=0
-    global _rag_chain
+    key = (mode, k)
 
-    if _rag_chain is None:
+    # Fast path
+    if key in _cache:
+        return _cache[key]
+
+    # Thread-safe initialization
+    with _lock:
+        if key in _cache:
+            return _cache[key]
+
         try:
-            logger.info(f"Initializing RAG chain (once) | mode={mode}, k={k}")
+            logger.info(f"Initializing RAG chain | mode={mode}, k={k}")
+
+            llm_model = "gpt-4o-mini"
+            temperature = 0
 
             retriever = get_retriever(k=k)
             prompt = get_prompt(mode=mode)
@@ -41,10 +49,10 @@ def get_rag_chain(mode: str = "default", k: int = 2):
             llm = ChatOpenAI(
                 model=llm_model,
                 temperature=temperature,
-                streaming=True
+                streaming=False
             )
 
-            _rag_chain = (
+            chain = (
                 {
                     "context": retriever | format_docs,
                     "question": lambda x: x
@@ -53,17 +61,16 @@ def get_rag_chain(mode: str = "default", k: int = 2):
                 | llm
                 | StrOutputParser()
             )
-            mlflow.log_param("llm_model",llm_model)
-            mlflow.log_param("temperature",temperature)
+
+            _cache[key] = chain
+            return chain
 
         except Exception as e:
             logger.error(f"Error building RAG chain: {e}")
             raise
 
-    return _rag_chain
 
-
-# ===== Main (Testing) =====
+# ===== Main (Testing Only) =====
 def main():
     logger.info("Starting RAG test")
 

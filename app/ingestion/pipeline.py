@@ -7,8 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.utils.logger import get_logger
 from app.retrieval.vector_store import create_vectorstore
-
-mlflow.set_tracking_uri("http://mlflow:5000")
+mlflow.set_tracking_uri(os.getenv("MLFLOW_URI", "http://localhost:5000"))
 mlflow.set_experiment("RAG pipeline")
 
 load_dotenv()

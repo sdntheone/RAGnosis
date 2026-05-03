@@ -11,4 +11,4 @@ COPY . .
 # ports
 EXPOSE 8501 8000
 # command
-CMD ["bash"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
