@@ -230,11 +230,11 @@ __pycache__/
 .env
 
 # Data
+
 data/raw/
 data/processed/
 
 # Vector DB
 vector_db/
-
 # Notebook checkpoints
 .ipynb_checkpoints/

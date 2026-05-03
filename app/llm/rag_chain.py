@@ -1,4 +1,5 @@
 import os
+import mlflow
 from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
@@ -26,6 +27,8 @@ def format_docs(docs):
 
 # ===== Build RAG Chain (ONLY ONCE) =====
 def get_rag_chain(mode: str = "default", k: int = 2):
+    llm_model="gpt-4o-mini"
+    temperature=0
     global _rag_chain
 
     if _rag_chain is None:
@@ -36,8 +39,8 @@ def get_rag_chain(mode: str = "default", k: int = 2):
             prompt = get_prompt(mode=mode)
 
             llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
+                model=llm_model,
+                temperature=temperature,
                 streaming=True
             )
 
@@ -50,6 +53,8 @@ def get_rag_chain(mode: str = "default", k: int = 2):
                 | llm
                 | StrOutputParser()
             )
+            mlflow.log_param("llm_model",llm_model)
+            mlflow.log_param("temperature",temperature)
 
         except Exception as e:
             logger.error(f"Error building RAG chain: {e}")

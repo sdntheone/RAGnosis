@@ -1,0 +1,39 @@
+services:
+
+  backend:
+    build:
+      context: .
+    image: ragnosis:latest
+    container_name: rag_backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - mlflow
+    volumes:
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+
+  frontend:
+    build:
+      context: .
+    image: ragnosis:latest
+    container_name: rag_frontend
+    command: streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    environment:
+      - API_URL=http://backend:8000/chat
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow_server
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_SERVER_ALLOWED_HOSTS=*
+    command: mlflow server --host 0.0.0.0 --port 5000

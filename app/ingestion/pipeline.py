@@ -1,11 +1,17 @@
+import os
+import time
+import mlflow
+from dotenv import load_dotenv
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import os
+
 from app.utils.logger import get_logger
-from dotenv import load_dotenv
+from app.retrieval.vector_store import create_vectorstore
+
+mlflow.set_tracking_uri("http://mlflow:5000")
+mlflow.set_experiment("RAG pipeline")
 
 load_dotenv()
-
 logger = get_logger(__name__)
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -13,6 +19,7 @@ DATA_PATH = os.path.join(BASE_DIR, "data", "raw")
 
 
 def load_books():
+    start_time = time.time()
     all_docs = []
 
     try:
@@ -25,8 +32,6 @@ def load_books():
         file_path = os.path.join(DATA_PATH, file)
 
         if os.path.isfile(file_path) and file.endswith(".pdf"):
-            logger.info(f"Loading file: {file}")
-
             try:
                 loader = PyMuPDFLoader(file_path)
                 docs = loader.load()
@@ -36,47 +41,59 @@ def load_books():
                     doc.metadata["type"] = "book"
 
                 all_docs.extend(docs)
-                logger.info(f"Loaded {len(docs)} pages from {file}")
 
             except Exception as e:
                 logger.error(f"Error loading {file}: {e}")
 
-    logger.info(f"Total documents loaded: {len(all_docs)}")
+    mlflow.log_metric("total_documents", len(all_docs))
+    mlflow.log_metric("loading_time", time.time() - start_time)
+
     return all_docs
 
 
 def split_chunks(docs):
-    try:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=100,
-            separators=["\n\n", "\n", ".", " ", ""]
-        )
+    start_time = time.time()
 
-        chunks = splitter.split_documents(docs)
-        logger.info(f"Total chunks created: {len(chunks)}")
+    chunk_size = 500
+    chunk_overlap = 100
 
-        return chunks
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ".", " ", ""]
+    )
 
-    except Exception as e:
-        logger.error(f"Error during chunking: {e}")
-        return []
+    mlflow.log_param("chunk_size", chunk_size)
+    mlflow.log_param("chunk_overlap", chunk_overlap)
+
+    chunks = splitter.split_documents(docs)
+
+    mlflow.log_metric("total_chunks", len(chunks))
+    mlflow.log_metric("chunking_time", time.time() - start_time)
+
+    return chunks
 
 
 def main():
-    logger.info("Starting ingestion pipeline")
+    with mlflow.start_run(run_name="ingestion_pipeline"):
+        mlflow.set_tag("stage","ingestion")
 
-    docs = load_books()
-    if not docs:
-        logger.warning("No documents loaded. Exiting pipeline.")
-        return
+        docs = load_books()
+        if not docs:
+            mlflow.log_metric("pipeline_success", 0)
+            return
 
-    chunks = split_chunks(docs)
-    if not chunks:
-        logger.warning("Chunking failed. Exiting pipeline.")
-        return
+        chunks = split_chunks(docs)
+        if not chunks:
+            mlflow.log_metric("pipeline_success", 0)
+            return
 
-    logger.info("Ingestion pipeline completed successfully")
+        start_time = time.time()
+
+        create_vectorstore(chunks)
+
+        mlflow.log_metric("indexing_time", time.time() - start_time)
+        mlflow.log_metric("pipeline_success", 1)
 
 
 if __name__ == "__main__":

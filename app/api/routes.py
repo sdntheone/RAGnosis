@@ -1,16 +1,22 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 import time
+import mlflow
 
 from app.utils.logger import get_logger
 from app.llm.rag_chain import get_rag_chain
+mlflow.set_tracking_uri("http://mlflow:5000")
+mlflow.set_experiment("RAG pipeline")
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
 # ===== Initialize ONCE =====
-rag_chain = get_rag_chain(mode="default", k=2)
+mode="default"
+retrieval_k=2
+rag_chain = get_rag_chain(mode=mode, k=retrieval_k)
+
 
 
 # ===== Request Schema =====
@@ -26,30 +32,41 @@ class ChatResponse(BaseModel):
 
 # ===== Chat Endpoint =====
 @router.post("/chat", response_model=ChatResponse)
+
 def chat(request: ChatRequest):
-    start_time = time.time()
+    with mlflow.start_run(run_name="rag_inference"):
+        mlflow.set_tag("stage", "inference")
+        mlflow.log_param("mode",mode)
+        mlflow.log_param("retrieval_k",retrieval_k)
+        start_time = time.time()
 
-    try:
-        logger.info(f"Received query: {request.query}")
+        try:
+            logger.info(f"Received query: {request.query}")
 
-        response = rag_chain.invoke(request.query)
+            response = rag_chain.invoke(request.query)
 
-        latency = round(time.time() - start_time, 2)
+            latency = round(time.time() - start_time, 2)
 
-        logger.info(f"Response generated in {latency}s")
+            logger.info(f"Response generated in {latency}s")
+            mlflow.log_metric("latency",latency)
+            mlflow.log_metric("request_success",1)
 
-        return {
-            "answer": response,
-            "latency": latency
-        }
 
-    except Exception as e:
-        logger.error(f"Error in /chat endpoint: {e}")
+            return {
+                "answer": response,
+                "latency": latency
+            }
 
-        return {
-            "answer": "Something went wrong. Please try again.",
-            "latency": 0.0
-        }
+            
+
+        except Exception as e:
+            logger.error(f"Error in /chat endpoint: {e}")
+            mlflow.log_metric("request_success",0)
+
+            return {
+                "answer": "Something went wrong. Please try again.",
+                "latency": 0.0
+            }
 
 
 # ===== Health Check =====
