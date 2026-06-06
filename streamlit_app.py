@@ -72,4 +72,4 @@ if query:
                 })
 
             except Exception as e:
-                st.error("Error connecting to API")
+                st.error(str(e))

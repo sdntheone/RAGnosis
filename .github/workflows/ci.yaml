@@ -1,69 +1,69 @@
-name: CI/CD Pipeline
+# name: CI/CD Pipeline
 
-on:
-  push:
-    branches:
-      - main
+# on:
+#   push:
+#     branches:
+#       - main
 
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
+# jobs:
+#   build-and-deploy:
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+#       - name: Login to Docker Hub
+#         uses: docker/login-action@v2
+#         with:
+#           username: ${{ secrets.DOCKER_HUB_USERNAME }}
+#           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      - name: Build Docker image
-        run: |
-          docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest .
+#       - name: Build Docker image
+#         run: |
+#           docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest .
 
-      - name: Push Docker image
-        run: |
-          docker push ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest
+#       - name: Push Docker image
+#         run: |
+#           docker push ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v0.1.5
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            # Create network (if not exists)
-            docker network create ragnosis_network || true
+#       - name: Deploy to EC2
+#         uses: appleboy/ssh-action@v0.1.5
+#         with:
+#           host: ${{ secrets.EC2_HOST }}
+#           username: ${{ secrets.EC2_USER }}
+#           key: ${{ secrets.EC2_SSH_KEY }}
+#           script: |
+#             # Create network (if not exists)
+#             docker network create ragnosis_network || true
 
-            # Pull latest image
-            docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest
+#             # Pull latest image
+#             docker pull ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest
 
-            # Stop and remove old containers
-            docker stop rag_backend || true
-            docker rm rag_backend || true
-            docker stop rag_frontend || true
-            docker rm rag_frontend || true
+#             # Stop and remove old containers
+#             docker stop rag_backend || true
+#             docker rm rag_backend || true
+#             docker stop rag_frontend || true
+#             docker rm rag_frontend || true
 
-            # Run backend (FastAPI)
-            docker run -d \
-              --network ragnosis_network \
-              -p 8000:8000 \
-              --name rag_backend \
-              --restart unless-stopped \
-              --env-file /home/ubuntu/.env \
-              -v /home/ubuntu/data:/app/data \
-              -v /home/ubuntu/vector_db:/app/vector_db \
-              ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest \
-              uvicorn main:app --host 0.0.0.0 --port 8000
+#             # Run backend (FastAPI)
+#             docker run -d \
+#               --network ragnosis_network \
+#               -p 8000:8000 \
+#               --name rag_backend \
+#               --restart unless-stopped \
+#               --env-file /home/ubuntu/.env \
+#               -v /home/ubuntu/data:/app/data \
+#               -v /home/ubuntu/vector_db:/app/vector_db \
+#               ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest \
+#               uvicorn main:app --host 0.0.0.0 --port 8000
 
-            # Run frontend (Streamlit)
-            docker run -d \
-              --network ragnosis_network \
-              -p 8501:8501 \
-              --name rag_frontend \
-              --restart unless-stopped \
-              -e API_URL=http://rag_backend:8000/chat \
-              ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest \
-              streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+#             # Run frontend (Streamlit)
+#             docker run -d \
+#               --network ragnosis_network \
+#               -p 8501:8501 \
+#               --name rag_frontend \
+#               --restart unless-stopped \
+#               -e API_URL=http://rag_backend:8000/chat \
+#               ${{ secrets.DOCKER_HUB_USERNAME }}/ragnosis:latest \
+#               streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0
