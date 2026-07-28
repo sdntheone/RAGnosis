@@ -63,6 +63,13 @@ def _matches_filter(metadata: dict, metadata_filter: dict | None) -> bool:
                 return False
     return True
 
+def _distance_to_similarity(distance: float) -> float:
+    """FAISS returns L2 distance (lower = better, unbounded). Convert to a
+    0-1 similarity score (higher = better) for use by callers like
+    retrieval_validation.py and chat_stream_routes.py.
+    """
+    return 1.0 / (1.0 + max(distance, 0.0))
+
 
 class FaissSessionBackend(VectorStoreBackend):
     def __init__(self, session_id: str):
@@ -136,6 +143,24 @@ class FaissSessionBackend(VectorStoreBackend):
             results = [r for r in results if _matches_filter(r.metadata, metadata_filter)]
 
         return results[:k]
+
+    def similarity_search_with_scores(
+        self, query: str, k: int = 5, metadata_filter: dict | None = None
+    ) -> list[tuple[Document, float]]:
+        if self._store is None:
+            return []
+
+        with self._lock:
+            fetch_k = k * 5 if metadata_filter else k
+            results = self._store.similarity_search_with_score(query, k=fetch_k)
+
+        scored = [
+            (doc, _distance_to_similarity(distance))
+            for doc, distance in results
+            if _matches_filter(doc.metadata, metadata_filter)
+        ]
+
+        return scored[:k]
 
     def get_all_documents(self, metadata_filter: dict | None = None) -> list[Document]:
         with self._lock:

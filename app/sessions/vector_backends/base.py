@@ -45,6 +45,17 @@ class VectorStoreBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def similarity_search_with_scores(
+        self, query: str, k: int = 5, metadata_filter: dict | None = None
+    ) -> list[tuple[Document, float]]:
+        """Same as similarity_search, but also returns a similarity score
+        per document, normalized to 0-1 where higher = better match. Each
+        backend is responsible for converting its own native score/distance
+        metric to this common scale.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_all_documents(self, metadata_filter: dict | None = None) -> list[Document]:
         """Return every indexed chunk (optionally filtered) -- used to
         build a session-scoped BM25 retriever and for document listing.
