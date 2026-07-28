@@ -105,19 +105,35 @@ def get_bm25_retriever(session_id: str, k: int = 10) -> BM25Retriever | None:
 
 def process_upload(session_id: str, file_path: str, filename: str) -> document_store.DocumentRecord:
     document_store.touch_session(session_id)
-
     file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     record = document_store.register_document(session_id, filename, file_type)
+    return _index_document(session_id, record.doc_id, file_type, file_path, filename)
 
+
+def process_upload_existing_record(
+    session_id: str, doc_id: str, file_path: str, filename: str
+) -> document_store.DocumentRecord:
+    """Same as process_upload, but for a doc_id that was already registered
+    synchronously (e.g. by upload_routes.py, so the client can poll status
+    immediately, before the background indexing task has even started).
+    """
+    document_store.touch_session(session_id)
+    file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _index_document(session_id, doc_id, file_type, file_path, filename)
+
+
+def _index_document(
+    session_id: str, doc_id: str, file_type: str, file_path: str, filename: str
+) -> document_store.DocumentRecord:
     try:
-        stored_path = _store_raw_upload(session_id, record.doc_id, file_path, filename)
-        extraction = _extract(stored_path, file_type, record.doc_id, filename)
+        stored_path = _store_raw_upload(session_id, doc_id, file_path, filename)
+        extraction = _extract(stored_path, file_type, doc_id, filename)
 
         chunks = _chunker.chunk(extraction.blocks)
         tagged_chunks = build_metadata(
             chunks,
             DocumentContext(
-                doc_id=record.doc_id,
+                doc_id=doc_id,
                 session_id=session_id,
                 source_file=filename,
                 file_type=file_type,
@@ -128,18 +144,17 @@ def process_upload(session_id: str, file_path: str, filename: str) -> document_s
         backend.add_documents(tagged_chunks)
 
         document_store.mark_ready(
-            record.doc_id,
+            doc_id,
             chunk_count=len(tagged_chunks),
             block_counts=extraction.block_count_by_type(),
             warnings=extraction.warnings,
         )
 
     except Exception as e:
-        document_store.mark_failed(record.doc_id, str(e))
+        document_store.mark_failed(doc_id, str(e))
         raise
 
-    return document_store.get_document(record.doc_id)
-
+    return document_store.get_document(doc_id)
 
 def _extract(file_path: str, file_type: str, doc_id: str, filename: str) -> ExtractionResult:
     if file_type in TEXT_LIKE_TYPES:
