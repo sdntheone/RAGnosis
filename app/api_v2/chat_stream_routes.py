@@ -17,16 +17,15 @@ no changes there either.
 Endpoint:
   POST /api/v2/sessions/{session_id}/chat/stream
 
-Known shortcut (see chat message above the code block): scored dense
-search reaches into FaissSessionBackend._store directly, since
-VectorStoreBackend's interface (file 11) only exposes unscored
-similarity_search(). See _dense_search_with_scores().
+Dense retrieval with scores goes through
+VectorStoreBackend.similarity_search_with_scores() -- backend-agnostic, no
+reaching into FAISS internals here. See app/sessions/vector_backends/base.py
+and faiss_backend.py for the interface and its default implementation.
 """
 
 from __future__ import annotations
 
 import json
-import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -37,7 +36,6 @@ from app.retrieval.rrf import reciprocal_rank_fusion
 from app.retrieval.reranker import CrossEncoderReranker
 from app.chunking.metadata_builder import build_filter
 from app.sessions import document_store, session_manager
-from app.sessions.vector_backends.faiss_backend import FaissSessionBackend, _matches_filter
 from app.guardrails import (
     input_validation,
     prompt_injection,
@@ -137,16 +135,18 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
             doc_ids=request.doc_ids,
         )
 
+        backend = session_manager.get_backend(session_id)
+
         with trace.stage("retrieval.dense"):
-            dense_docs, dense_scores = _dense_search_with_scores(
-                session_id, query, k=DENSE_FETCH_K, metadata_filter=metadata_filter
+            dense_results = backend.similarity_search_with_scores(
+                query, k=DENSE_FETCH_K, metadata_filter=metadata_filter
             )
+            dense_docs = [doc for doc, _ in dense_results]
+            dense_scores = [score for _, score in dense_results]
 
         with trace.stage("retrieval.sparse"):
             bm25 = session_manager.get_bm25_retriever(session_id, k=SPARSE_FETCH_K)
             sparse_docs = bm25.get_relevant_documents(query) if bm25 else []
-            if metadata_filter:
-                sparse_docs = [d for d in sparse_docs if _matches_filter(d.metadata, metadata_filter)]
 
         with trace.stage("retrieval.fusion"):
             fused_docs = reciprocal_rank_fusion(dense_docs, sparse_docs)
@@ -156,20 +156,22 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
 
         # --- 4. Prompt-injection check on retrieved CONTEXT --------------
         chunk_texts = [d.page_content for d in reranked_docs]
-        context_injection_results = prompt_injection.detect_in_context(chunk_texts)
+        flagged_results = [
+            prompt_injection.detect_in_context([text]) for text in chunk_texts
+        ]
+        any_flagged = any(flagged_results)
         trace.record_guardrail(
             "prompt_injection_context",
-            not context_injection_results,
-            f"{len(context_injection_results)} chunk(s) flagged" if context_injection_results else None,
+            not any_flagged,
+            f"{sum(1 for r in flagged_results if r)} chunk(s) flagged" if any_flagged else None,
         )
-        if context_injection_results:
-            flagged_texts = set()
-            for text, result in zip(chunk_texts, [
-                prompt_injection.detect_in_context([t]) for t in chunk_texts
-            ]):
-                if result:
-                    flagged_texts.add(text)
-            reranked_docs = [d for d in reranked_docs if d.page_content not in flagged_texts]
+        if any_flagged:
+            flagged_texts = {
+                text for text, result in zip(chunk_texts, flagged_results) if result
+            }
+            keep_indices = [i for i, d in enumerate(reranked_docs) if d.page_content not in flagged_texts]
+            reranked_docs = [reranked_docs[i] for i in keep_indices]
+            chunk_texts = [chunk_texts[i] for i in keep_indices]
 
         # --- 5. Retrieval validation (similarity floor) -------------------
         score_by_content = dict(zip([d.page_content for d in dense_docs], dense_scores))
@@ -257,34 +259,6 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-
-def _dense_search_with_scores(
-    session_id: str, query: str, k: int, metadata_filter: dict | None
-) -> tuple[list, list[float]]:
-    """Reaches into FaissSessionBackend's internal FAISS store to get
-    similarity scores, since VectorStoreBackend.similarity_search() (file
-    11) only returns unscored Documents. See the note at the top of this
-    file -- this is a documented shortcut, not the intended long-term shape
-    of the abstraction.
-    """
-    backend = session_manager.get_backend(session_id)
-    assert isinstance(backend, FaissSessionBackend)
-
-    if backend._store is None:
-        return [], []
-
-    fetch_k = k * 5 if metadata_filter else k
-    results = backend._store.similarity_search_with_score(query, k=fetch_k)
-
-    docs, distances = [], []
-    for doc, distance in results:
-        if metadata_filter and not _matches_filter(doc.metadata, metadata_filter):
-            continue
-        docs.append(doc)
-        distances.append(retrieval_validation.faiss_distance_to_similarity(distance))
-
-    return docs[:k], distances[:k]
-
 
 def _emit_blocked(trace: Trace, message: str, is_no_info: bool = False):
     trace.answer = message
