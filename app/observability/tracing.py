@@ -130,6 +130,14 @@ class Trace:
         return all(g.passed for g in self.guardrail_outcomes)
 
     def to_dict(self) -> dict:
+        def _safe(value):
+            if value is None or isinstance(value, (str, bool, int, float, list, dict)):
+                return value
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return str(value)
+
         return {
             "trace_id": self.trace_id,
             "session_id": self.session_id,
@@ -143,7 +151,7 @@ class Trace:
                     "source": c.source,
                     "doc_id": c.doc_id,
                     "chunk_type": c.chunk_type,
-                    "similarity_score": c.similarity_score,
+                    "similarity_score": _safe(c.similarity_score),
                     "page_number": c.page_number,
                 }
                 for c in self.retrieved_chunks
@@ -157,7 +165,7 @@ class Trace:
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "answer": self.answer,
-            "groundedness_score": self.groundedness_score,
+            "groundedness_score": _safe(self.groundedness_score),
             "confidence": self.confidence,
             "langsmith_url": self.langsmith_url,
             "error": self.error,

@@ -146,7 +146,7 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
 
         with trace.stage("retrieval.sparse"):
             bm25 = session_manager.get_bm25_retriever(session_id, k=SPARSE_FETCH_K)
-            sparse_docs = bm25.get_relevant_documents(query) if bm25 else []
+            sparse_docs = bm25.invoke(query) if bm25 else []
 
         with trace.stage("retrieval.fusion"):
             fused_docs = reciprocal_rank_fusion(dense_docs, sparse_docs)
@@ -245,9 +245,12 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
             "sources": sources,
             "confidence": confidence,
             "groundedness_score": groundedness_result.score,
+            "generation_latency_ms": trace.stage_latencies_ms.get("generation"),
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         trace.error = str(e)
         yield _sse_event("error", {"message": "Something went wrong generating a response."})
 

@@ -75,7 +75,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 def save_trace(trace: Trace) -> None:
     payload = trace.to_dict()
-    scores = [c.similarity_score for c in trace.retrieved_chunks if c.similarity_score is not None]
+    scores = [
+        float(c.similarity_score) for c in trace.retrieved_chunks if c.similarity_score is not None
+    ]
     top_score = max(scores) if scores else None
 
     conn = _get_conn()

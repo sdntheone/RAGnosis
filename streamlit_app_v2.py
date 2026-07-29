@@ -8,13 +8,11 @@ This app talks only to the api_v2 routes:
   - upload_routes.py    (create session, upload, status polling)
   - document_routes.py  (list, delete, clear, rebuild)
   - chat_stream_routes.py (streaming chat with guardrails + sources)
-  - observability routes (added in the next file, observability_routes.py --
-    this UI's dashboard tab is written against that endpoint's expected
-    shape now, ready to work once that file exists)
+  - observability_routes.py (dashboard summary + recent traces)
 
 Run with: streamlit run streamlit_app_v2.py
 Requires the FastAPI app (main.py) running separately, with api_v2 routers
-included (final wiring step, after all api_v2 files exist).
+included.
 """
 
 import json
@@ -38,7 +36,7 @@ def _init_session():
         resp.raise_for_status()
         st.session_state.session_id = resp.json()["session_id"]
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []  # list of {"role", "content", "sources", "confidence"}
+        st.session_state.chat_history = []  # list of {"role", "content", "sources", "confidence", "generation_latency_ms"}
 
 
 _init_session()
@@ -159,7 +157,11 @@ with chat_tab:
         with st.chat_message(turn["role"]):
             st.markdown(turn["content"])
             if turn.get("sources"):
-                with st.expander(f"Sources (confidence: {turn.get('confidence', 'n/a')})"):
+                past_label = f"Sources (confidence: {turn.get('confidence', 'n/a')}"
+                if turn.get("generation_latency_ms") is not None:
+                    past_label += f" · generated in {turn['generation_latency_ms']:.0f} ms"
+                past_label += ")"
+                with st.expander(past_label):
                     for src in turn["sources"]:
                         page = f", page {src['page_number']}" if src.get("page_number") is not None else ""
                         st.caption(f"{src['source']}{page} — {src['chunk_type']}")
@@ -188,6 +190,7 @@ with chat_tab:
             full_answer = ""
             sources = []
             confidence = None
+            generation_latency_ms = None
 
             try:
                 with requests.post(
@@ -207,6 +210,7 @@ with chat_tab:
                         elif event["type"] == "done":
                             sources = event.get("sources", [])
                             confidence = event.get("confidence")
+                            generation_latency_ms = event.get("generation_latency_ms")
                         elif event["type"] in ("blocked", "no_info"):
                             full_answer = event["message"]
                         elif event["type"] == "error":
@@ -215,7 +219,11 @@ with chat_tab:
                 answer_placeholder.markdown(full_answer)
 
                 if sources:
-                    with st.expander(f"Sources (confidence: {confidence or 'n/a'})"):
+                    label = f"Sources (confidence: {confidence or 'n/a'}"
+                    if generation_latency_ms is not None:
+                        label += f" · generated in {generation_latency_ms:.0f} ms"
+                    label += ")"
+                    with st.expander(label):
                         for src in sources:
                             page = f", page {src['page_number']}" if src.get("page_number") is not None else ""
                             st.caption(f"{src['source']}{page} — {src['chunk_type']}")
@@ -229,6 +237,7 @@ with chat_tab:
             "content": full_answer,
             "sources": sources,
             "confidence": confidence,
+            "generation_latency_ms": generation_latency_ms,
         })
 
 

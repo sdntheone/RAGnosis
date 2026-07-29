@@ -64,11 +64,12 @@ def _matches_filter(metadata: dict, metadata_filter: dict | None) -> bool:
     return True
 
 def _distance_to_similarity(distance: float) -> float:
-    """FAISS returns L2 distance (lower = better, unbounded). Convert to a
-    0-1 similarity score (higher = better) for use by callers like
-    retrieval_validation.py and chat_stream_routes.py.
+    """FAISS returns L2 distance (lower = better, unbounded) as numpy.float32,
+    not a plain Python float. Convert to a 0-1 similarity score (higher =
+    better), cast to a native float so it's always JSON-serializable
+    downstream (observability trace logging, API responses).
     """
-    return 1.0 / (1.0 + max(distance, 0.0))
+    return float(1.0 / (1.0 + max(float(distance), 0.0)))
 
 
 class FaissSessionBackend(VectorStoreBackend):

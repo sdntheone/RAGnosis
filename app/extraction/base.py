@@ -29,6 +29,8 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 from langchain_core.documents import Document
 
