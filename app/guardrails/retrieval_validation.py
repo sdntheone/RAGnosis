@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-MIN_SIMILARITY_SCORE = 0.25  # on a 0-1 cosine-similarity scale
+MIN_SIMILARITY_SCORE = 0.38  # on a 0-1 cosine-similarity scale
 MIN_CHUNK_COUNT = 1
 LOW_CONFIDENCE_SIMILARITY_SCORE = 0.45  # below this, flag as "low confidence" but don't block
 

@@ -258,3 +258,4 @@ ragnosis_env/
 
 # Environment secrets
 .env
+.eval_session_cache.json

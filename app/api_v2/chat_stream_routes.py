@@ -21,6 +21,14 @@ Dense retrieval with scores goes through
 VectorStoreBackend.similarity_search_with_scores() -- backend-agnostic, no
 reaching into FAISS internals here. See app/sessions/vector_backends/base.py
 and faiss_backend.py for the interface and its default implementation.
+
+Latency note: hallucination_check (an extra LLM-as-judge call, ~1s) runs
+AFTER the response has already been sent to the user, not before. It still
+logs to observability for the dashboard, but no longer adds to what the
+user waits for. The confidence value shown in the live "done" event
+reflects only the fast groundedness score, not the hallucination judge --
+if the judge later finds the answer ungrounded, that only shows up in the
+trace/dashboard, not retroactively in the chat UI.
 """
 
 from __future__ import annotations
@@ -53,8 +61,9 @@ from langchain_openai import ChatOpenAI
 router = APIRouter(prefix="/api/v2/sessions", tags=["chat"])
 
 RERANK_TOP_K = 5
-DENSE_FETCH_K = 15
-SPARSE_FETCH_K = 15
+DENSE_FETCH_K = 8   # narrowed from 15 -- cross-encoder rerank cost scales
+SPARSE_FETCH_K = 8  # with candidate count; was the single biggest latency
+                     # contributor (~5.6s of ~8.2s average in eval runs)
 GROUNDEDNESS_JUDGE_THRESHOLD = 0.35  # below this, pay for the LLM-as-judge check
 
 _reranker: CrossEncoderReranker | None = None
@@ -204,31 +213,42 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
 
         full_answer = ""
+        accumulated_chunk = None
         with trace.stage("generation"):
-            for chunk in llm.stream(messages):
+            # stream_usage=True asks the API to include token usage on the
+            # final streamed chunk. LangChain AIMessageChunk objects support
+            # `+=` accumulation, and the summed chunk carries usage_metadata
+            # once the stream completes -- this is the standard way to get
+            # token counts out of a *streaming* call (a plain llm.invoke()
+            # would return usage directly, but streaming doesn't by default).
+            for chunk in llm.stream(messages, stream_usage=True):
                 token = chunk.content or ""
                 full_answer += token
                 if token:
                     yield _sse_event("token", {"text": token})
+                accumulated_chunk = chunk if accumulated_chunk is None else accumulated_chunk + chunk
 
-        trace.record_generation(full_answer)
+        token_usage = None
+        usage_metadata = getattr(accumulated_chunk, "usage_metadata", None) if accumulated_chunk else None
+        if usage_metadata:
+            token_usage = {
+                "prompt_tokens": usage_metadata.get("input_tokens"),
+                "completion_tokens": usage_metadata.get("output_tokens"),
+                "total_tokens": usage_metadata.get("total_tokens"),
+            }
 
-        # --- 7. Groundedness + selective hallucination check --------------
+        trace.record_generation(full_answer, token_usage)
+
+        # --- 7. Groundedness (fast, always runs before responding) --------
         with trace.stage("groundedness_check"):
             groundedness_result = groundedness.score_groundedness(full_answer, chunk_texts)
 
+        # Confidence shown to the user reflects the fast groundedness check
+        # only. The slower hallucination_check (an extra LLM call) runs
+        # AFTER the response below -- it still logs to observability for
+        # the dashboard, it just no longer adds latency to what the user
+        # waits for.
         confidence = retrieval_check.confidence
-        if groundedness_result.score < GROUNDEDNESS_JUDGE_THRESHOLD:
-            with trace.stage("hallucination_check"):
-                hallucination_result = hallucination_check.check_hallucination(full_answer, chunk_texts)
-            trace.record_guardrail(
-                "hallucination_check", hallucination_result.is_grounded,
-                f"unsupported claims: {hallucination_result.unsupported_claims}"
-                if not hallucination_result.is_grounded else None,
-            )
-            if not hallucination_result.is_grounded:
-                confidence = "low"
-
         trace.record_confidence(groundedness_result.score, confidence)
 
         # --- 8. Sources / citations + confidence, sent as final event -----
@@ -238,6 +258,7 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
                 "page_number": d.metadata.get("page_number"),
                 "chunk_type": d.metadata.get("chunk_type"),
                 "doc_id": d.metadata.get("doc_id"),
+                "content": d.page_content,
             }
             for d in reranked_docs
         ]
@@ -247,6 +268,20 @@ def _stream_response(session_id: str, request: ChatStreamRequest):
             "groundedness_score": groundedness_result.score,
             "generation_latency_ms": trace.stage_latencies_ms.get("generation"),
         })
+
+        # --- 9. Hallucination check -- runs after the response is already
+        # sent. Purely for observability/logging at this point, not for
+        # gating what the user already received.
+        if groundedness_result.score < GROUNDEDNESS_JUDGE_THRESHOLD:
+            with trace.stage("hallucination_check"):
+                hallucination_result = hallucination_check.check_hallucination(full_answer, chunk_texts)
+            trace.record_guardrail(
+                "hallucination_check", hallucination_result.is_grounded,
+                f"unsupported claims: {hallucination_result.unsupported_claims}"
+                if not hallucination_result.is_grounded else None,
+            )
+            if not hallucination_result.is_grounded:
+                trace.record_confidence(groundedness_result.score, "low")
 
     except Exception as e:
         import traceback
