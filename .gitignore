@@ -239,3 +239,22 @@ vector_db/
 # Notebook checkpoints
 .ipynb_checkpoints/
 .dockerignore
+
+# Runtime-generated data — never commit
+extracted_images/
+vector_db/
+uploads/
+session_documents.db
+observability_traces.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+ragnosis_env/
+
+# Environment secrets
+.env
