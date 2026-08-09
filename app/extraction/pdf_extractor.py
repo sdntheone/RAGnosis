@@ -2,8 +2,8 @@
 app/extraction/pdf_extractor.py
 
 Multimodal PDF extraction: text, tables, images, OCR text inside images,
-figure/table captions, and reading-order layout -- all linked together as
-Blocks (see app/extraction/base.py).
+vision-LLM generated captions, figure/table captions, and reading-order
+layout -- all linked together as Blocks (see app/extraction/base.py).
 
 This file does NOT touch app/ingestion/pipeline.py. It is a new, optional
 extraction path that ingestion/pipeline.py can start calling later if you
@@ -14,8 +14,15 @@ Libraries used:
                       embedded images, page geometry
 - pdfplumber       -> table detection + extraction (PyMuPDF has no native
                       table support)
-- pytesseract      -> OCR on extracted images
+- pytesseract      -> OCR on extracted images (literal text inside images)
 - Pillow           -> image I/O for OCR
+- caption_generator -> vision-LLM captioning (app/extraction/caption_generator.py),
+                       for describing image CONTENT (charts, diagrams, photos)
+                       that OCR alone can't capture since it only reads
+                       printed text, not visual meaning. Capped per document
+                       via MAX_CAPTIONS_PER_DOCUMENT so a PDF with many images
+                       doesn't fire an unbounded number of LLM calls at
+                       upload time.
 """
 
 from __future__ import annotations
@@ -37,8 +44,14 @@ from app.extraction.base import (
     ExtractionResult,
 )
 
+try:
+    from app.extraction.caption_generator import generate_caption
+except Exception:
+    generate_caption = None  # caption_generator.py not present / import failed -- degrade gracefully
+
 CAPTION_PREFIXES = ("figure", "fig.", "fig ", "table", "chart", "diagram")
 HEADING_FONT_SIZE_RATIO = 1.25  # heading if span font size > 1.25x page median
+MAX_CAPTIONS_PER_DOCUMENT = 15  # cap vision-LLM calls per uploaded PDF
 
 
 class PdfExtractor(BaseExtractor):
@@ -57,6 +70,7 @@ class PdfExtractor(BaseExtractor):
             source_file=os.path.basename(file_path),
             file_type="pdf",
         )
+        self._caption_count = 0  # reset per-document vision-LLM call counter
 
         doc_image_dir = os.path.join(self.image_output_dir, doc_id)
         os.makedirs(doc_image_dir, exist_ok=True)
@@ -165,7 +179,7 @@ class PdfExtractor(BaseExtractor):
         return blocks, order_index
 
     # ------------------------------------------------------------------
-    # Images + OCR
+    # Images + OCR + vision-LLM captioning
     # ------------------------------------------------------------------
 
     def _extract_images(
@@ -221,6 +235,30 @@ class PdfExtractor(BaseExtractor):
                     image_block.relates_to.append(ocr_block.block_id)
                     blocks.append(ocr_block)
                     order_index += 1
+
+                if generate_caption is not None and self._caption_count < MAX_CAPTIONS_PER_DOCUMENT:
+                    try:
+                        caption_text = generate_caption(image_path)
+                    except Exception as e:
+                        caption_text = ""
+                        warnings.append(f"Caption generation failed: {e}")
+                    self._caption_count += 1
+
+                    if caption_text.strip():
+                        caption_block = Block(
+                            block_id=str(uuid.uuid4()),
+                            doc_id=doc_id,
+                            source_file=source_file,
+                            block_type=BlockType.CAPTION,
+                            content=caption_text,
+                            page_number=page_number,
+                            order_index=order_index,
+                            bbox=BoundingBox(bbox.x0, bbox.y0, bbox.x1, bbox.y1),
+                            relates_to=[image_block.block_id],
+                        )
+                        image_block.relates_to.append(caption_block.block_id)
+                        blocks.append(caption_block)
+                        order_index += 1
 
             except Exception as e:
                 warnings.append(

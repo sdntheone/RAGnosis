@@ -2,9 +2,9 @@
 app/extraction/docx_extractor.py
 
 Multimodal DOCX extraction: paragraphs (with heading/caption detection),
-tables, embedded images, OCR text inside images, and captions -- linked
-together as Blocks (see app/extraction/base.py), preserving document
-reading order.
+tables, embedded images, OCR text inside images, vision-LLM generated
+captions, and document-authored captions -- linked together as Blocks
+(see app/extraction/base.py), preserving document reading order.
 
 Does not touch app/ingestion/pipeline.py.
 """
@@ -28,8 +28,14 @@ from app.extraction.base import (
     ExtractionResult,
 )
 
+try:
+    from app.extraction.caption_generator import generate_caption
+except Exception:
+    generate_caption = None  # caption_generator.py not present / import failed -- degrade gracefully
+
 CAPTION_PREFIXES = ("figure", "fig.", "fig ", "table", "chart", "diagram")
 CAPTION_LINK_WINDOW = 2  # order_index distance within which a caption links to media
+MAX_CAPTIONS_PER_DOCUMENT = 15  # cap vision-LLM calls per uploaded DOCX
 
 
 class DocxExtractor(BaseExtractor):
@@ -44,6 +50,7 @@ class DocxExtractor(BaseExtractor):
             source_file=os.path.basename(file_path),
             file_type="docx",
         )
+        self._caption_count = 0  # reset per-document vision-LLM call counter
 
         doc_image_dir = os.path.join(self.image_output_dir, doc_id)
         os.makedirs(doc_image_dir, exist_ok=True)
@@ -99,6 +106,28 @@ class DocxExtractor(BaseExtractor):
                             image_block.relates_to.append(ocr_block.block_id)
                             result.blocks.append(ocr_block)
                             order_index += 1
+
+                        if generate_caption is not None and self._caption_count < MAX_CAPTIONS_PER_DOCUMENT:
+                            try:
+                                caption_text = generate_caption(image_path)
+                            except Exception as e:
+                                caption_text = ""
+                                result.warnings.append(f"Caption generation failed: {e}")
+                            self._caption_count += 1
+
+                            if caption_text.strip():
+                                caption_block = Block(
+                                    block_id=str(uuid.uuid4()),
+                                    doc_id=doc_id,
+                                    source_file=result.source_file,
+                                    block_type=BlockType.CAPTION,
+                                    content=caption_text,
+                                    order_index=order_index,
+                                    relates_to=[image_block.block_id],
+                                )
+                                image_block.relates_to.append(caption_block.block_id)
+                                result.blocks.append(caption_block)
+                                order_index += 1
 
                     except Exception as e:
                         result.warnings.append(f"Image extraction failed: {e}")
